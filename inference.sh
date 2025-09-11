@@ -68,5 +68,5 @@ if [ "$mode" = "realtime" ]; then
     --version $version_arg"
 fi
 
-# Run inference
-python3 -m $script_name $cmd_args
+# Run inference using the virtual environment
+./MuseTalk_env/bin/python -m $script_name $cmd_args
