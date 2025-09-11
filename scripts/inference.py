@@ -167,6 +167,9 @@ def main(args):
                 if bbox == coord_placeholder:
                     continue
                 x1, y1, x2, y2 = bbox
+                # Skip frames with invalid bbox dimensions
+                if x2 <= x1 or y2 <= y1:
+                    continue
                 if args.version == "v15":
                     y2 = y2 + args.extra_margin
                     y2 = min(y2, frame.shape[0])
@@ -174,57 +177,86 @@ def main(args):
                 crop_frame = cv2.resize(crop_frame, (256,256), interpolation=cv2.INTER_LANCZOS4)
                 latents = vae.get_latents_for_unet(crop_frame)
                 input_latent_list.append(latents)
-        
+
             # Smooth first and last frames
             frame_list_cycle = frame_list + frame_list[::-1]
             coord_list_cycle = coord_list + coord_list[::-1]
             input_latent_list_cycle = input_latent_list + input_latent_list[::-1]
-            
-            # Batch inference
-            print("Starting inference")
+
+            # Get video length from audio chunks
             video_num = len(whisper_chunks)
-            batch_size = args.batch_size
-            gen = datagen(
-                whisper_chunks=whisper_chunks,
-                vae_encode_latents=input_latent_list_cycle,
-                batch_size=batch_size,
-                delay_frame=0,
-                device=device,
-            )
+
+            # Handle case where no valid faces were detected in any frame
+            if len(input_latent_list) == 0:
+                print("No valid face detections found. Using passthrough mode - writing original frames.")
+                for i in range(video_num):
+                    ori_frame = frame_list_cycle[i % len(frame_list_cycle)]
+                    cv2.imwrite(f"{result_img_save_path}/{str(i).zfill(8)}.png", ori_frame)
+            else:
+                # Batch inference
+                print("Starting inference")
+                batch_size = args.batch_size
+                gen = datagen(
+                    whisper_chunks=whisper_chunks,
+                    vae_encode_latents=input_latent_list_cycle,
+                    batch_size=batch_size,
+                    delay_frame=0,
+                    device=device,
+                )
+
+                res_frame_list = []
+                total = int(np.ceil(float(video_num) / batch_size))
+
+                # Execute inference
+                for i, (whisper_batch, latent_batch) in enumerate(tqdm(gen, total=total)):
+                    audio_feature_batch = pe(whisper_batch)
+                    latent_batch = latent_batch.to(dtype=unet.model.dtype)
+
+                    pred_latents = unet.model(latent_batch, timesteps, encoder_hidden_states=audio_feature_batch).sample
+                    recon = vae.decode_latents(pred_latents)
+                    for res_frame in recon:
+                        res_frame_list.append(res_frame)
             
-            res_frame_list = []
-            total = int(np.ceil(float(video_num) / batch_size))
-            
-            # Execute inference
-            for i, (whisper_batch, latent_batch) in enumerate(tqdm(gen, total=total)):
-                audio_feature_batch = pe(whisper_batch)
-                latent_batch = latent_batch.to(dtype=unet.model.dtype)
-                
-                pred_latents = unet.model(latent_batch, timesteps, encoder_hidden_states=audio_feature_batch).sample
-                recon = vae.decode_latents(pred_latents)
-                for res_frame in recon:
-                    res_frame_list.append(res_frame)
-            
-            # Pad generated images to original video size
-            print("Padding generated images to original video size")
-            for i, res_frame in enumerate(tqdm(res_frame_list)):
-                bbox = coord_list_cycle[i%(len(coord_list_cycle))]
-                ori_frame = copy.deepcopy(frame_list_cycle[i%(len(frame_list_cycle))])
-                x1, y1, x2, y2 = bbox
-                if args.version == "v15":
-                    y2 = y2 + args.extra_margin
-                    y2 = min(y2, frame.shape[0])
-                try:
-                    res_frame = cv2.resize(res_frame.astype(np.uint8), (x2-x1, y2-y1))
-                except:
-                    continue
-                
-                # Merge results with version-specific parameters
-                if args.version == "v15":
-                    combine_frame = get_image(ori_frame, res_frame, [x1, y1, x2, y2], mode=args.parsing_mode, fp=fp)
-                else:
-                    combine_frame = get_image(ori_frame, res_frame, [x1, y1, x2, y2], fp=fp)
-                cv2.imwrite(f"{result_img_save_path}/{str(i).zfill(8)}.png", combine_frame)
+                # Pad generated images to original video size
+                print("Padding generated images to original video size")
+                res_frame_idx = 0  # Track index in res_frame_list separately
+
+                for i in range(video_num):
+                    bbox = coord_list_cycle[i%(len(coord_list_cycle))]
+                    ori_frame = copy.deepcopy(frame_list_cycle[i%(len(frame_list_cycle))])
+                    x1, y1, x2, y2 = bbox
+
+                    # Handle frames with no face detection (placeholder or invalid bbox)
+                    if bbox == coord_placeholder or x2 <= x1 or y2 <= y1:
+                        # Write original frame unchanged
+                        cv2.imwrite(f"{result_img_save_path}/{str(i).zfill(8)}.png", ori_frame)
+                        continue
+
+                    # Get the corresponding generated frame
+                    if res_frame_idx >= len(res_frame_list):
+                        # If we run out of generated frames, write original
+                        cv2.imwrite(f"{result_img_save_path}/{str(i).zfill(8)}.png", ori_frame)
+                        continue
+
+                    res_frame = res_frame_list[res_frame_idx]
+                    res_frame_idx += 1
+
+                    if args.version == "v15":
+                        y2 = y2 + args.extra_margin
+                        y2 = min(y2, ori_frame.shape[0])  # Fixed: use ori_frame instead of frame
+                    try:
+                        res_frame = cv2.resize(res_frame.astype(np.uint8), (x2-x1, y2-y1))
+                    except:
+                        # If resize fails, write original frame
+                        cv2.imwrite(f"{result_img_save_path}/{str(i).zfill(8)}.png", ori_frame)
+                        continue
+
+                    # Merge results with version-specific parameters
+                    if args.version == "v15":
+                        combine_frame = get_image(ori_frame, res_frame, [x1, y1, x2, y2], mode=args.parsing_mode, fp=fp)
+                    else:
+                        combine_frame = get_image(ori_frame, res_frame, [x1, y1, x2, y2], fp=fp)
+                    cv2.imwrite(f"{result_img_save_path}/{str(i).zfill(8)}.png", combine_frame)
 
             # Save prediction results
             temp_vid_path = f"{temp_dir}/temp_{input_basename}_{audio_basename}.mp4"
