@@ -160,6 +160,7 @@ def main(args):
             )
 
             # Preprocess input images
+            pitch_filtered_count = 0  # Initialize pitch filtering counter
             if os.path.exists(crop_coord_save_path) and args.use_saved_coord:
                 print("Using saved coordinates")
                 with open(crop_coord_save_path, 'rb') as f:
@@ -167,7 +168,7 @@ def main(args):
                 frame_list = read_imgs(input_img_list)
             else:
                 print("Extracting landmarks... time-consuming operation")
-                coord_list, frame_list = get_landmark_and_bbox(input_img_list, bbox_shift)
+                coord_list, frame_list, pitch_filtered_count = get_landmark_and_bbox(input_img_list, bbox_shift)
                 with open(crop_coord_save_path, 'wb') as f:
                     pickle.dump(coord_list, f)
 
@@ -289,6 +290,10 @@ def main(args):
                         combine_frame = get_image(ori_frame, res_frame, [x1, y1, x2, y2], fp=fp)
                     cv2.imwrite(f"{result_img_save_path}/{str(i).zfill(8)}.png", combine_frame)
 
+                # Report pitch filtering results
+                if args.enable_pitch_filter:
+                    print(f"Pitch filtering: {pitch_filtered_count} frames skipped due to pitch detection criteria")
+
                 # Report no-lip bypass results
                 if getattr(args, 'enable_no_lip_bypass', False) and no_lip_bypass_count > 0:
                     print(f"No-lip bypass: {no_lip_bypass_count} frames used original frames due to insufficient lip detection")
@@ -343,7 +348,7 @@ if __name__ == "__main__":
     parser.add_argument("--right_cheek_width", type=int, default=90, help="Width of right cheek region")
     parser.add_argument("--version", type=str, default="v15", choices=["v1", "v15"], help="Model version to use")
     parser.add_argument("--enable_pitch_filter", action="store_true", help="Enable pitch filtering for extreme downward poses")
-    parser.add_argument("--pitch_down_threshold", type=float, default=60.0, help="Pitch angle threshold for filtering (degrees downward)")
-    parser.add_argument("--pitch_up_threshold", type=float, default=55.0, help="Pitch angle threshold for exiting filter (degrees downward)")
+    parser.add_argument("--pitch_down_threshold", type=float, default=45.0, help="Pitch angle threshold for filtering (degrees downward)")
+    parser.add_argument("--pitch_up_threshold", type=float, default=40.0, help="Pitch angle threshold for exiting filter (degrees downward)")
     args = parser.parse_args()
     main(args)

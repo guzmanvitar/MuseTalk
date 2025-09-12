@@ -301,13 +301,13 @@ def get_landmark_and_bbox(img_list,upperbondrange =0):
     if pitch_filter_enabled and pitch_filtered_count > 0:
         print(f"Pitch filtering: {pitch_filtered_count} frames filtered due to extreme downward pose (≥{pitch_down_threshold_deg}°)")
     print("*************************************************************************************************************************************")
-    return coords_list,frames
+    return coords_list, frames, pitch_filtered_count
     
 
 if __name__ == "__main__":
     img_list = ["./results/lyria/00000.png","./results/lyria/00001.png","./results/lyria/00002.png","./results/lyria/00003.png"]
     crop_coord_path = "./coord_face.pkl"
-    coords_list,full_frames = get_landmark_and_bbox(img_list)
+    coords_list, full_frames, pitch_filtered_count = get_landmark_and_bbox(img_list)
     with open(crop_coord_path, 'wb') as f:
         pickle.dump(coords_list, f)
         

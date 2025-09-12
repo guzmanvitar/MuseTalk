@@ -70,7 +70,7 @@ def debug_inpainting(video_path, bbox_shift, extra_margin=10, parsing_mode="jaw"
     cv2.imwrite(debug_frame_path, cv2.cvtColor(first_frame, cv2.COLOR_RGB2BGR))
     
     # Get face coordinates
-    coord_list, frame_list = get_landmark_and_bbox([debug_frame_path], bbox_shift)
+    coord_list, frame_list, _ = get_landmark_and_bbox([debug_frame_path], bbox_shift)
     bbox = coord_list[0]
     frame = frame_list[0]
     
@@ -261,7 +261,7 @@ def inference(audio_path, video_path, bbox_shift, extra_margin=10, parsing_mode=
         frame_list = read_imgs(input_img_list)
     else:
         print("extracting landmarks...time consuming")
-        coord_list, frame_list = get_landmark_and_bbox(input_img_list, bbox_shift)
+        coord_list, frame_list, _ = get_landmark_and_bbox(input_img_list, bbox_shift)
         with open(crop_coord_save_path, 'wb') as f:
             pickle.dump(coord_list, f)
     bbox_shift_text = get_bbox_range(input_img_list, bbox_shift)
