@@ -53,7 +53,11 @@ cmd_args="--inference_config $config_path \
     --unet_model_path $unet_model_path \
     --unet_config $unet_config \
     --version $version_arg \
-    --enable_no_lip_bypass"
+    --enable_no_lip_bypass \
+    --enable_pose2d_filter \
+    --pose2d_vpi_thr 1.10 \
+    --pose2d_lfc_thr 0.19 \
+    --pose2d_debug_detailed"
 
 echo "Testing comprehensive clips with MuseTalk $version in $mode mode"
 echo "Config: $config_path"

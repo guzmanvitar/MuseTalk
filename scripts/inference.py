@@ -20,7 +20,7 @@ from musetalk.utils.blending import get_image
 from musetalk.utils.face_parsing import FaceParsing
 from musetalk.utils.audio_processor import AudioProcessor
 from musetalk.utils.utils import get_file_type, get_video_fps, datagen, load_all_model
-from musetalk.utils.preprocessing import get_landmark_and_bbox, read_imgs, coord_placeholder, set_pitch_filter_config, reset_pitch_filter_state
+from musetalk.utils.preprocessing import get_landmark_and_bbox, read_imgs, coord_placeholder, set_pitch_filter_config, set_pose2d_filter_config, reset_pitch_filter_state
 
 def fast_check_ffmpeg():
     try:
@@ -86,7 +86,28 @@ def main(args):
     set_pitch_filter_config(
         enabled=args.enable_pitch_filter,
         down_threshold=args.pitch_down_threshold,
-        up_threshold=args.pitch_up_threshold
+        up_threshold=args.pitch_up_threshold,
+        conf_min=args.pitch_conf_min,
+        ema_alpha=args.pitch_ema_alpha,
+        min_hold_frames=args.pitch_min_hold_frames,
+        debug_detailed=args.pitch_debug_detailed
+    )
+
+    # Configure 2D pose-only filtering (overrides angle-based when enabled)
+    set_pose2d_filter_config(
+        enabled=getattr(args, 'enable_pose2d_filter', False),
+        vpi_thr=getattr(args, 'pose2d_vpi_thr', 1.10),
+        lfc_thr=getattr(args, 'pose2d_lfc_thr', 0.19),
+        nmi_thr=getattr(args, 'pose2d_nmi_thr', 0.55),
+        ema_alpha=getattr(args, 'pose2d_ema_alpha', 0.30),
+        consec_frames=getattr(args, 'pose2d_consec_frames', 3),
+        min_hold_frames=getattr(args, 'pose2d_min_hold_frames', 6),
+        none_consecutive_max=getattr(args, 'pose2d_none_consecutive_max', 4),
+        enable_ear_gate=getattr(args, 'pose2d_enable_ear_gate', False),
+        ear_thr=getattr(args, 'pose2d_ear_thr', 0.18),
+        ear_gate_consec=getattr(args, 'pose2d_ear_gate_consec', 2),
+        ear_bias=getattr(args, 'pose2d_ear_bias', 0.02),
+        debug_detailed=getattr(args, 'pose2d_debug_detailed', False),
     )
 
     # Process each task
@@ -113,7 +134,7 @@ def main(args):
             output_basename = f"{input_basename}_{audio_basename}"
 
             # Create temporary directories
-            temp_dir = os.path.join(args.result_dir, f"{args.version}")
+            temp_dir = args.result_dir
             os.makedirs(temp_dir, exist_ok=True)
 
             # Set result save paths
@@ -337,6 +358,21 @@ if __name__ == "__main__":
     parser.add_argument("--extra_margin", type=int, default=10, help="Extra margin for face cropping")
     parser.add_argument("--fps", type=int, default=25, help="Video frames per second")
     parser.add_argument("--audio_padding_length_left", type=int, default=2, help="Left padding length for audio")
+    # Pose2D-only filtering (2D ratios + simple hysteresis)
+    parser.add_argument("--enable_pose2d_filter", action="store_true", help="Enable 2D landmarks-only pose filtering (overrides angle-based when enabled)")
+    parser.add_argument("--pose2d_vpi_thr", type=float, default=1.10, help="Threshold for VPI: (chin_y - nose_y) / (nose_y - brow_mid_y). Filter when VPI <= threshold (lower indicates down)")
+    parser.add_argument("--pose2d_lfc_thr", type=float, default=0.19, help="Threshold for LFC: (chin_y - mouth_y) / face_bbox_h. Filter when LFC <= threshold (lower indicates down)")
+    parser.add_argument("--pose2d_nmi_thr", type=float, default=0.55, help="Threshold for NMI: (mouth_y - nose_y) / (nose_y - brow_mid_y). Not used in decision; logged only")
+    parser.add_argument("--pose2d_ema_alpha", type=float, default=0.30, help="EMA alpha for ratio smoothing (0-1)")
+    parser.add_argument("--pose2d_consec_frames", type=int, default=3, help="Consecutive frames required to enter/exit state")
+    parser.add_argument("--pose2d_min_hold_frames", type=int, default=6, help="Minimum frames to hold state before allowing change")
+    parser.add_argument("--pose2d_none_consecutive_max", type=int, default=4, help="None/invalid metrics for N frames forces FILTER (conservative)")
+    parser.add_argument("--pose2d_enable_ear_gate", action="store_true", help="Enable optional EAR gate to boost down decision when squinting sustained")
+    parser.add_argument("--pose2d_ear_thr", type=float, default=0.18, help="EAR threshold for squint detection")
+    parser.add_argument("--pose2d_ear_gate_consec", type=int, default=2, help="Consecutive frames of low EAR to trigger bias")
+    parser.add_argument("--pose2d_ear_bias", type=float, default=0.02, help="Bias added to VPI and NMI thresholds when EAR gate is on")
+    parser.add_argument("--pose2d_debug_detailed", action="store_true", help="Enable per-frame detailed Pose2D filter debug logs")
+
     parser.add_argument("--audio_padding_length_right", type=int, default=2, help="Right padding length for audio")
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size for inference")
     parser.add_argument("--output_vid_name", type=str, default=None, help="Name of output video file")
@@ -346,9 +382,13 @@ if __name__ == "__main__":
     parser.add_argument("--parsing_mode", default='jaw', help="Face blending parsing mode")
     parser.add_argument("--left_cheek_width", type=int, default=90, help="Width of left cheek region")
     parser.add_argument("--right_cheek_width", type=int, default=90, help="Width of right cheek region")
+    parser.add_argument("--pitch_conf_min", type=float, default=0.6, help="Minimum confidence (0-1) required to change pitch filter state")
+    parser.add_argument("--pitch_ema_alpha", type=float, default=0.3, help="EMA alpha for pitch smoothing (0-1)")
+    parser.add_argument("--pitch_min_hold_frames", type=int, default=6, help="Minimum frames to hold state before allowing change")
+    parser.add_argument("--pitch_debug_detailed", action="store_true", help="Enable per-frame detailed pitch filter debug logs")
     parser.add_argument("--version", type=str, default="v15", choices=["v1", "v15"], help="Model version to use")
     parser.add_argument("--enable_pitch_filter", action="store_true", help="Enable pitch filtering for extreme downward poses")
-    parser.add_argument("--pitch_down_threshold", type=float, default=45.0, help="Pitch angle threshold for filtering (degrees downward)")
-    parser.add_argument("--pitch_up_threshold", type=float, default=40.0, help="Pitch angle threshold for exiting filter (degrees downward)")
+    parser.add_argument("--pitch_down_threshold", type=float, default=30.0, help="Pitch angle threshold for filtering (degrees downward)")
+    parser.add_argument("--pitch_up_threshold", type=float, default=20.0, help="Pitch angle threshold for exiting filter (degrees downward)")
     args = parser.parse_args()
     main(args)
