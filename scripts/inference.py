@@ -18,7 +18,7 @@ from musetalk.utils.blending import get_image
 from musetalk.utils.face_parsing import FaceParsing
 from musetalk.utils.audio_processor import AudioProcessor
 from musetalk.utils.utils import get_file_type, get_video_fps, datagen, load_all_model
-from musetalk.utils.preprocessing import get_landmark_and_bbox, read_imgs, coord_placeholder
+from musetalk.utils.preprocessing import get_landmark_and_bbox, read_imgs, coord_placeholder, set_pitch_filter_config, reset_pitch_filter_state
 
 def fast_check_ffmpeg():
     try:
@@ -79,10 +79,20 @@ def main(args):
     # Load inference configuration
     inference_config = OmegaConf.load(args.inference_config)
     print("Loaded inference config:", inference_config)
-    
+
+    # Configure pitch filtering for normal inference mode
+    set_pitch_filter_config(
+        enabled=args.enable_pitch_filter,
+        down_threshold=args.pitch_down_threshold,
+        up_threshold=args.pitch_up_threshold
+    )
+
     # Process each task
     for task_id in inference_config:
         try:
+            # Reset pitch filtering state for each new video
+            reset_pitch_filter_state()
+
             # Get task configuration
             video_path = inference_config[task_id]["video_path"]
             audio_path = inference_config[task_id]["audio_path"]
@@ -304,5 +314,8 @@ if __name__ == "__main__":
     parser.add_argument("--left_cheek_width", type=int, default=90, help="Width of left cheek region")
     parser.add_argument("--right_cheek_width", type=int, default=90, help="Width of right cheek region")
     parser.add_argument("--version", type=str, default="v15", choices=["v1", "v15"], help="Model version to use")
+    parser.add_argument("--enable_pitch_filter", action="store_true", help="Enable pitch filtering for extreme downward poses")
+    parser.add_argument("--pitch_down_threshold", type=float, default=60.0, help="Pitch angle threshold for filtering (degrees downward)")
+    parser.add_argument("--pitch_up_threshold", type=float, default=55.0, help="Pitch angle threshold for exiting filter (degrees downward)")
     args = parser.parse_args()
     main(args)
