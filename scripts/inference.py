@@ -14,6 +14,8 @@ from omegaconf import OmegaConf
 from transformers import WhisperModel
 import sys
 
+from PIL import Image
+
 from musetalk.utils.blending import get_image
 from musetalk.utils.face_parsing import FaceParsing
 from musetalk.utils.audio_processor import AudioProcessor
@@ -37,12 +39,12 @@ def main(args):
         os.environ["PATH"] = f"{args.ffmpeg_path}{path_separator}{os.environ['PATH']}"
         if not fast_check_ffmpeg():
             print("Warning: Unable to find ffmpeg, please ensure ffmpeg is properly installed")
-    
+
     # Set computing device
     device = torch.device(f"cuda:{args.gpu_id}" if torch.cuda.is_available() else "cpu")
     # Load model weights
     vae, unet, pe = load_all_model(
-        unet_model_path=args.unet_model_path, 
+        unet_model_path=args.unet_model_path,
         vae_type=args.vae_type,
         unet_config=args.unet_config,
         device=device
@@ -54,19 +56,19 @@ def main(args):
         pe = pe.half()
         vae.vae = vae.vae.half()
         unet.model = unet.model.half()
-    
+
     # Move models to specified device
     pe = pe.to(device)
     vae.vae = vae.vae.to(device)
     unet.model = unet.model.to(device)
-        
+
     # Initialize audio processor and Whisper model
     audio_processor = AudioProcessor(feature_extractor_path=args.whisper_dir)
     weight_dtype = unet.model.dtype
     whisper = WhisperModel.from_pretrained(args.whisper_dir)
     whisper = whisper.to(device=device, dtype=weight_dtype).eval()
     whisper.requires_grad_(False)
-    
+
     # Initialize face parser with configurable parameters based on version
     if args.version == "v15":
         fp = FaceParsing(
@@ -75,7 +77,7 @@ def main(args):
         )
     else:  # v1
         fp = FaceParsing()
-    
+
     # Load inference configuration
     inference_config = OmegaConf.load(args.inference_config)
     print("Loaded inference config:", inference_config)
@@ -98,34 +100,34 @@ def main(args):
             audio_path = inference_config[task_id]["audio_path"]
             if "result_name" in inference_config[task_id]:
                 args.output_vid_name = inference_config[task_id]["result_name"]
-            
+
             # Set bbox_shift based on version
             if args.version == "v15":
                 bbox_shift = 0  # v15 uses fixed bbox_shift
             else:
                 bbox_shift = inference_config[task_id].get("bbox_shift", args.bbox_shift)  # v1 uses config or default
-            
+
             # Set output paths
             input_basename = os.path.basename(video_path).split('.')[0]
             audio_basename = os.path.basename(audio_path).split('.')[0]
             output_basename = f"{input_basename}_{audio_basename}"
-            
+
             # Create temporary directories
             temp_dir = os.path.join(args.result_dir, f"{args.version}")
             os.makedirs(temp_dir, exist_ok=True)
-            
+
             # Set result save paths
             result_img_save_path = os.path.join(temp_dir, output_basename)
             crop_coord_save_path = os.path.join(args.result_dir, "../", input_basename+".pkl")
             os.makedirs(result_img_save_path, exist_ok=True)
-            
+
             # Set output video paths
             if args.output_vid_name is None:
                 output_vid_name = os.path.join(temp_dir, output_basename + ".mp4")
             else:
                 output_vid_name = os.path.join(temp_dir, args.output_vid_name)
             output_vid_name_concat = os.path.join(temp_dir, output_basename + "_concat.mp4")
-            
+
             # Extract frames from source video
             if get_file_type(video_path) == "video":
                 save_dir_full = os.path.join(temp_dir, input_basename)
@@ -147,16 +149,16 @@ def main(args):
             # Extract audio features
             whisper_input_features, librosa_length = audio_processor.get_audio_feature(audio_path)
             whisper_chunks = audio_processor.get_whisper_chunk(
-                whisper_input_features, 
-                device, 
-                weight_dtype, 
-                whisper, 
+                whisper_input_features,
+                device,
+                weight_dtype,
+                whisper,
                 librosa_length,
                 fps=fps,
                 audio_padding_length_left=args.audio_padding_length_left,
                 audio_padding_length_right=args.audio_padding_length_right,
             )
-            
+
             # Preprocess input images
             if os.path.exists(crop_coord_save_path) and args.use_saved_coord:
                 print("Using saved coordinates")
@@ -168,9 +170,9 @@ def main(args):
                 coord_list, frame_list = get_landmark_and_bbox(input_img_list, bbox_shift)
                 with open(crop_coord_save_path, 'wb') as f:
                     pickle.dump(coord_list, f)
-            
-            print(f"Number of frames: {len(frame_list)}")         
-            
+
+            print(f"Number of frames: {len(frame_list)}")
+
             # Process each frame
             input_latent_list = []
             for bbox, frame in zip(coord_list, frame_list):
@@ -203,6 +205,8 @@ def main(args):
                     ori_frame = frame_list_cycle[i % len(frame_list_cycle)]
                     cv2.imwrite(f"{result_img_save_path}/{str(i).zfill(8)}.png", ori_frame)
             else:
+                # Initialize counter for no-lip bypass tracking
+                no_lip_bypass_count = 0
                 # Batch inference
                 print("Starting inference")
                 batch_size = args.batch_size
@@ -226,7 +230,7 @@ def main(args):
                     recon = vae.decode_latents(pred_latents)
                     for res_frame in recon:
                         res_frame_list.append(res_frame)
-            
+
                 # Pad generated images to original video size
                 print("Padding generated images to original video size")
                 res_frame_idx = 0  # Track index in res_frame_list separately
@@ -254,6 +258,23 @@ def main(args):
                     if args.version == "v15":
                         y2 = y2 + args.extra_margin
                         y2 = min(y2, ori_frame.shape[0])  # Fixed: use ori_frame instead of frame
+
+                    # Simple 'no lip' presence check on the face crop; bypass if lips are not detected
+                    if getattr(args, 'enable_no_lip_bypass', False):
+                        try:
+                            crop_for_parse = ori_frame[y1:y2, x1:x2]
+                            lip_mask_img = fp(Image.fromarray(crop_for_parse), mode="lips_only")
+                            lip_mask_np = np.array(lip_mask_img)
+                            lip_pixels = int(np.count_nonzero(lip_mask_np))
+                            lip_frac = lip_pixels / float(lip_mask_np.size) if lip_mask_np.size > 0 else 0.0
+                            if lip_pixels == 0 or lip_frac < getattr(args, 'no_lip_min_frac', 0.0015):
+                                # Use original frame unchanged when no lips are detected
+                                cv2.imwrite(f"{result_img_save_path}/{str(i).zfill(8)}.png", ori_frame)
+                                no_lip_bypass_count += 1
+                                continue
+                        except Exception as e:
+                            # Be permissive on error; proceed with normal pipeline
+                            pass
                     try:
                         res_frame = cv2.resize(res_frame.astype(np.uint8), (x2-x1, y2-y1))
                     except:
@@ -268,24 +289,28 @@ def main(args):
                         combine_frame = get_image(ori_frame, res_frame, [x1, y1, x2, y2], fp=fp)
                     cv2.imwrite(f"{result_img_save_path}/{str(i).zfill(8)}.png", combine_frame)
 
+                # Report no-lip bypass results
+                if getattr(args, 'enable_no_lip_bypass', False) and no_lip_bypass_count > 0:
+                    print(f"No-lip bypass: {no_lip_bypass_count} frames used original frames due to insufficient lip detection")
+
             # Save prediction results
             temp_vid_path = f"{temp_dir}/temp_{input_basename}_{audio_basename}.mp4"
             cmd_img2video = f"ffmpeg -y -v warning -r {fps} -f image2 -i {result_img_save_path}/%08d.png -vcodec libx264 -vf format=yuv420p -crf 18 {temp_vid_path}"
             print("Video generation command:", cmd_img2video)
-            os.system(cmd_img2video)   
-            
+            os.system(cmd_img2video)
+
             cmd_combine_audio = f"ffmpeg -y -v warning -i {audio_path} -i {temp_vid_path} {output_vid_name}"
-            print("Audio combination command:", cmd_combine_audio) 
+            print("Audio combination command:", cmd_combine_audio)
             os.system(cmd_combine_audio)
-            
+
             # Clean up temporary files
             shutil.rmtree(result_img_save_path)
             os.remove(temp_vid_path)
-            
+
             shutil.rmtree(save_dir_full)
             if not args.saved_coord:
                 os.remove(crop_coord_save_path)
-                    
+
             print(f"Results saved to {output_vid_name}")
         except Exception as e:
             print("Error occurred during processing:", e)
@@ -293,6 +318,9 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--ffmpeg_path", type=str, default="./ffmpeg-4.4-amd64-static/", help="Path to ffmpeg executable")
+    parser.add_argument("--enable_no_lip_bypass", action="store_true", help="Bypass inference when lips are not detected in face crop")
+    parser.add_argument("--no_lip_min_frac", type=float, default=0.0015, help="Minimum fraction of lip pixels (512x512 parsing) to accept frame")
+
     parser.add_argument("--gpu_id", type=int, default=0, help="GPU ID to use")
     parser.add_argument("--vae_type", type=str, default="sd-vae", help="Type of VAE model")
     parser.add_argument("--unet_config", type=str, default="./models/musetalk/config.json", help="Path to UNet configuration file")

@@ -52,7 +52,8 @@ cmd_args="--inference_config $config_path \
     --result_dir $result_dir \
     --unet_model_path $unet_model_path \
     --unet_config $unet_config \
-    --version $version_arg"
+    --version $version_arg \
+    --enable_no_lip_bypass"
 
 echo "Testing comprehensive clips with MuseTalk $version in $mode mode"
 echo "Config: $config_path"

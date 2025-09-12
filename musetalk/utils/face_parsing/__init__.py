@@ -100,9 +100,14 @@ class FaceParsing():
                 eroded = cv2.erode(original_dilated, self.cheek_kernel, iterations=2)
                 face_region = cv2.bitwise_and(eroded, self.cheek_mask)
                 face_region = cv2.bitwise_or(face_region, cv2.bitwise_and(original_dilated, ~self.cheek_mask))
-                parsing[(face_region==255) & (~np.isin(parsing, [10]))] = 255         
+                parsing[(face_region==255) & (~np.isin(parsing, [10]))] = 255
                 parsing[np.isin(parsing, [11, 12, 13])] = 255
                 parsing[np.where(parsing!=255)] = 0
+            elif mode == "lips_only":
+                # Return a binary mask where only upper_lip/lower_lip/mouth are 255
+                lip_mask = np.zeros_like(parsing, dtype=np.uint8)
+                lip_mask[np.isin(parsing, [11, 12, 13])] = 255
+                parsing = lip_mask
             else:
                 parsing[np.isin(parsing, [1, 11, 12, 13])] = 255
                 parsing[np.where(parsing!=255)] = 0
