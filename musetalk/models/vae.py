@@ -36,7 +36,7 @@ class VAE():
         self.transform = transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
         self._resized_img = resized_img
         self._mask_tensor = self.get_mask_tensor()
-        
+
     def get_mask_tensor(self):
         """
         Creates a mask tensor for image processing.
@@ -47,7 +47,7 @@ class VAE():
         mask_tensor[mask_tensor< 0.5] = 0
         mask_tensor[mask_tensor>= 0.5] = 1
         return mask_tensor
-            
+
     def preprocess_img(self,img_name,half_mask=False):
         """
         Preprocess an image for the VAE.
@@ -68,14 +68,14 @@ class VAE():
         else:
             img = cv2.cvtColor(img_name, cv2.COLOR_BGR2RGB)
             window.append(img)
-            
+
         x = np.asarray(window) / 255.
         x = np.transpose(x, (3, 0, 1, 2))
         x = torch.squeeze(torch.FloatTensor(x))
         if half_mask:
             x = x * (self._mask_tensor>0.5)
         x = self.transform(x)
-        
+
         x = x.unsqueeze(0) # [1, 3, 256, 256] torch tensor
         x = x.to(self.vae.device)
 
@@ -92,7 +92,7 @@ class VAE():
             init_latent_dist = self.vae.encode(image.to(self.vae.dtype)).latent_dist
         init_latents = self.scaling_factor * init_latent_dist.sample()
         return init_latents
-    
+
     def decode_latents(self, latents):
         """
         Decode latent variables back into an image.
@@ -106,14 +106,14 @@ class VAE():
         image = (image * 255).round().astype("uint8")
         image = image[...,::-1] # RGB to BGR
         return image
-    
+
     def get_latents_for_unet(self,img):
         """
         Prepare latent variables for a U-Net model.
         :param img: The image to process.
         :return: A concatenated tensor of latents for U-Net input.
         """
-        
+
         ref_image = self.preprocess_img(img,half_mask=True) # [1, 3, 256, 256] RGB, torch tensor
         masked_latents = self.encode_latents(ref_image) # [1, 4, 32, 32], torch tensor
         ref_image = self.preprocess_img(img,half_mask=False) # [1, 3, 256, 256] RGB, torch tensor
@@ -121,11 +121,49 @@ class VAE():
         latent_model_input = torch.cat([masked_latents, ref_latents], dim=1)
         return latent_model_input
 
+    def get_latents_for_unet_batch(self, imgs):
+        """Batched version of get_latents_for_unet for a list of BGR numpy images.
+        Returns a list of [1, 8, 32, 32] tensors (one per input image).
+        """
+        if imgs is None or len(imgs) == 0:
+            return []
+        # Resize to 256 and convert BGR->RGB
+        proc = []
+        for im in imgs:
+            if im is None:
+                continue
+            if im.shape[0] != self._resized_img or im.shape[1] != self._resized_img:
+                im = cv2.resize(im, (self._resized_img, self._resized_img), interpolation=cv2.INTER_LANCZOS4)
+            im = cv2.cvtColor(im, cv2.COLOR_BGR2RGB)
+            proc.append(im)
+        if len(proc) == 0:
+            return []
+        x = torch.from_numpy(np.asarray(proc)).float() / 255.0  # [N, H, W, 3]
+        x = x.permute(0, 3, 1, 2).contiguous()  # [N, 3, H, W]
+        # Prepare half-mask for top half
+        mask = (self._mask_tensor.to(x.device) > 0.5).unsqueeze(0).unsqueeze(1)  # [1,1,H,W]
+        x_masked = x * mask.float()
+        # Normalize to [-1,1] per channel
+        def _norm(t):
+            return (t - 0.5) / 0.5
+        x = _norm(x)
+        x_masked = _norm(x_masked)
+        x = x.to(self.vae.device).to(memory_format=torch.channels_last)
+        x_masked = x_masked.to(self.vae.device).to(memory_format=torch.channels_last)
+        with torch.no_grad():
+            masked_latents = self.vae.encode(x_masked.to(self.vae.dtype)).latent_dist.sample()
+            ref_latents = self.vae.encode(x.to(self.vae.dtype)).latent_dist.sample()
+        masked_latents = masked_latents * self.scaling_factor
+        ref_latents = ref_latents * self.scaling_factor
+        latent_model_input = torch.cat([masked_latents, ref_latents], dim=1)  # [N, 8, 32, 32]
+        # Return as list of [1, 8, 32, 32]
+        return [latent_model_input[i:i+1] for i in range(latent_model_input.shape[0])]
+
 if __name__ == "__main__":
     vae_mode_path = "./models/sd-vae-ft-mse/"
     vae = VAE(model_path = vae_mode_path,use_float16=False)
     img_path = "./results/sun001_crop/00000.png"
-    
+
     crop_imgs_path = "./results/sun001_crop/"
     latents_out_path = "./results/latents/"
     if not os.path.exists(latents_out_path):
@@ -143,6 +181,5 @@ if __name__ == "__main__":
         #torch.save(latents,os.path.join(latents_out_path,index+".pt"))
         #reload_tensor = torch.load('tensor.pt')
         #print(reload_tensor.size())
-        
 
-    
+

@@ -57,7 +57,9 @@ cmd_args="--inference_config $config_path \
     --enable_pose2d_filter \
     --pose2d_vpi_thr 1.10 \
     --pose2d_lfc_thr 0.19 \
-    --pose2d_debug_detailed"
+    --ffmpeg_preset veryfast \
+    --vae_batch_size 32 \
+    --batch_size 12"
 
 echo "Testing comprehensive clips with MuseTalk $version in $mode mode"
 echo "Config: $config_path"
