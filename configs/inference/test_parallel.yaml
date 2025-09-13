@@ -1,0 +1,20 @@
+# Repeat test configuration for parallelization testing
+task_up_down_up_down1:
+ video_path: "test_clips/segment_0001_up_down_up_down.mp4"
+ audio_path: "test_clips/segment_0001_up_down_up_down.wav"
+ result_name: "segment_0001_up_down_up_down_result1.mp4"
+
+task_up_down_up_down2:
+ video_path: "test_clips/segment_0001_up_down_up_down.mp4"
+ audio_path: "test_clips/segment_0001_up_down_up_down.wav"
+ result_name: "segment_0001_up_down_up_down_result2.mp4"
+
+task_up_down_up_down3:
+ video_path: "test_clips/segment_0001_up_down_up_down.mp4"
+ audio_path: "test_clips/segment_0001_up_down_up_down.wav"
+ result_name: "segment_0001_up_down_up_down_result3.mp4"
+
+task_up_down_up_down4:
+ video_path: "test_clips/segment_0001_up_down_up_down.mp4"
+ audio_path: "test_clips/segment_0001_up_down_up_down.wav"
+ result_name: "segment_0001_up_down_up_down_result4.mp4"

@@ -23,6 +23,8 @@ from musetalk.utils.utils import get_file_type, get_video_fps, datagen, load_all
 from musetalk.utils.preprocessing import get_landmark_and_bbox, read_imgs, coord_placeholder, set_pitch_filter_config, set_pose2d_filter_config, reset_pitch_filter_state
 import time
 from contextlib import contextmanager
+import tempfile
+import traceback
 
 # Optional memory utilities
 try:
@@ -99,7 +101,296 @@ class Perf:
             rtf = total / total_media_seconds
             print(f"Input media duration               : {total_media_seconds:8.3f}s")
             print(f"Real-time factor (RTF)             : {rtf:8.3f}x slower than real-time")
+
         print("==================================\n")
+
+# ========================= Parallelization Coordinator Helpers =========================
+
+def detect_system(device):
+    info = {
+        "cpu_logical": os.cpu_count() or 1,
+        "mem_total_gb": None,
+        "mem_avail_gb": None,
+        "gpu_name": None,
+        "gpu_total_gb": None,
+        "gpu_alloc_gb": None,
+        "gpu_reserved_gb": None,
+    }
+    try:
+        if psutil is not None:
+            vm = psutil.virtual_memory()
+            info["mem_total_gb"] = vm.total / (1024 ** 3)
+            info["mem_avail_gb"] = vm.available / (1024 ** 3)
+    except Exception:
+        pass
+    try:
+        if torch.cuda.is_available():
+            dev = torch.device(device) if not isinstance(device, torch.device) else device
+            props = torch.cuda.get_device_properties(dev)
+            info["gpu_name"] = props.name
+            info["gpu_total_gb"] = props.total_memory / (1024 ** 3)
+            alloc_mb, res_mb = _gpu_mem_mb(dev)
+            info["gpu_alloc_gb"] = (alloc_mb / 1024.0) if alloc_mb >= 0 else None
+            info["gpu_reserved_gb"] = (res_mb / 1024.0) if res_mb >= 0 else None
+    except Exception:
+        pass
+    return info
+
+
+def _estimate_video_duration_sec(video_path: str) -> float:
+    try:
+        if get_file_type(video_path) == "video":
+            cap = cv2.VideoCapture(video_path)
+            fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+            frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0
+            cap.release()
+            if frame_count > 0 and fps > 0:
+                return float(frame_count) / float(fps)
+        # directory of images or single image -> small default duration
+        return 8.0
+    except Exception:
+        return 8.0
+
+
+def _build_task_list(conf) -> list:
+    tasks = []
+    for task_id in conf:
+        try:
+            video_path = conf[task_id]["video_path"]
+            audio_path = conf[task_id].get("audio_path")
+            dur = _estimate_video_duration_sec(video_path)
+            tasks.append({
+                "task_id": task_id,
+                "video_path": video_path,
+                "audio_path": audio_path,
+                "dur": dur,
+            })
+        except Exception:
+            continue
+    return tasks
+
+
+def _partition_tasks(tasks: list, n_bins: int):
+    bins = [{"dur": 0.0, "items": []} for _ in range(max(1, n_bins))]
+    for t in sorted(tasks, key=lambda x: -x.get("dur", 0.0)):
+        b = min(bins, key=lambda x: x["dur"])
+        b["items"].append(t)
+        b["dur"] += t.get("dur", 0.0)
+    return bins
+
+
+def _write_subset_yaml(items: list, base_dir: str, idx: int) -> str:
+    subset = {}
+    for t in items:
+        entry = {
+            "video_path": t["video_path"],
+        }
+        if t.get("audio_path"):
+            entry["audio_path"] = t["audio_path"]
+        subset[t["task_id"]] = entry
+    tmp_dir = os.path.join(base_dir, "_parallel_tmp")
+    os.makedirs(tmp_dir, exist_ok=True)
+    child_yaml = os.path.join(tmp_dir, f"subset_{idx}.yaml")
+    OmegaConf.save(config=OmegaConf.create(subset), f=child_yaml)
+    return child_yaml
+
+
+def _parse_prof_from_log(log_path: str):
+    tot_measured = 0.0
+    media_secs = 0.0
+    try:
+        with open(log_path, "r", errors="ignore") as f:
+            for line in f:
+                if "Total measured sections" in line:
+                    try:
+                        tot_measured = float(line.strip().split(":")[-1].strip().rstrip("s"))
+                    except Exception:
+                        pass
+                if "Input media duration" in line:
+                    try:
+                        media_secs = float(line.strip().split(":")[-1].strip().rstrip("s"))
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+    return tot_measured, media_secs
+
+
+def coordinator_main(args):
+    device = torch.device(f"cuda:{args.gpu_id}" if torch.cuda.is_available() else "cpu")
+    sys_info = detect_system(device)
+
+    # Recommendations
+    n = max(1, int(args.num_threads))
+    cpu_logical = sys_info.get("cpu_logical", 1)
+    t_cpu = args.cpu_threads_per_job if args.cpu_threads_per_job else max(2, min(8, int(0.8 * cpu_logical / n)))
+    t_ff = max(1, t_cpu // 2)
+
+    # Load config and partition tasks
+    conf = OmegaConf.load(args.inference_config)
+    tasks = _build_task_list(conf)
+    bins = _partition_tasks(tasks, n)
+
+
+    print("[COORD] System:", sys_info)
+    print(f"[COORD] Spawning {n} jobs | cpu_threads/job={t_cpu} ffmpeg_threads/job={t_ff}")
+
+    children = []
+    logs = []
+    metas = []
+    for i, b in enumerate(bins):
+
+        if len(b["items"]) == 0:
+            continue
+        child_yaml = _write_subset_yaml(b["items"], args.result_dir, i)
+        child_result_dir = os.path.join(args.result_dir, f"p{i}")
+        os.makedirs(child_result_dir, exist_ok=True)
+
+        # Scale batch sizes conservatively for multi-job
+        bs_child = max(4, int(args.batch_size if hasattr(args, "batch_size") else 8))
+        vae_bs_child = max(8, int(getattr(args, "vae_batch_size", 32)))
+        if n > 1:
+            bs_child = max(6, int(bs_child * 0.8))
+            vae_bs_child = max(16, int(vae_bs_child * 0.8))
+
+        env = os.environ.copy()
+        env["OMP_NUM_THREADS"] = str(t_cpu)
+        env["MKL_NUM_THREADS"] = str(t_cpu)
+        env["OPENBLAS_NUM_THREADS"] = str(t_cpu)
+        env["NUMEXPR_NUM_THREADS"] = str(t_cpu)
+
+        log_path = os.path.join(child_result_dir, f"child_{i}.log")
+        logs.append(log_path)
+        metas.append({"i": i, "child_yaml": child_yaml, "child_result_dir": child_result_dir})
+
+        logf = open(log_path, "w")
+
+        cmd = [
+            sys.executable, "-m", "scripts.inference",
+            "--inference_config", child_yaml,
+            "--result_dir", child_result_dir,
+            "--unet_model_path", args.unet_model_path,
+            "--unet_config", args.unet_config,
+            "--version", args.version,
+            "--batch_size", str(bs_child),
+            "--vae_batch_size", str(vae_bs_child),
+            "--ffmpeg_preset", getattr(args, "ffmpeg_preset", "veryfast"),
+        ]
+        if getattr(args, "ffmpeg_threads", None):
+            cmd += ["--ffmpeg_threads", str(args.ffmpeg_threads)]
+        if getattr(args, "use_float16", False):
+            cmd += ["--use_float16"]
+        if getattr(args, "enable_no_lip_bypass", False):
+            cmd += ["--enable_no_lip_bypass"]
+        if getattr(args, "enable_pose2d_filter", False):
+            cmd += ["--enable_pose2d_filter",
+                    "--pose2d_vpi_thr", str(args.pose2d_vpi_thr),
+                    "--pose2d_lfc_thr", str(args.pose2d_lfc_thr)]
+        if getattr(args, "whisper_dir", None):
+            cmd += ["--whisper_dir", args.whisper_dir]
+        if getattr(args, "gpu_id", None) is not None:
+            cmd += ["--gpu_id", str(args.gpu_id)]
+        if getattr(args, "ffmpeg_path", None):
+            cmd += ["--ffmpeg_path", args.ffmpeg_path]
+
+        print("[COORD] Launch:", " ".join(cmd))
+        p = subprocess.Popen(cmd, env=env, stdout=logf, stderr=logf)
+        children.append({"proc": p, "logf": logf})
+
+        if i < len(bins) - 1 and args.stagger_start_secs > 0:
+            time.sleep(args.stagger_start_secs)
+
+    # Monitor and aggregate
+    retcodes = []
+    for child in children:
+        rc = child["proc"].wait()
+        try:
+            child["logf"].flush(); child["logf"].close()
+        except Exception:
+            pass
+        retcodes.append(rc)
+
+    # Retry failed children once with reduced batch sizes (OOM resilience)
+    if any(rc != 0 for rc in retcodes):
+        print("[COORD] Some children failed. Attempting one retry with reduced batch sizes...")
+        for idx, rc in enumerate(retcodes):
+            if rc == 0:
+                continue
+            meta = metas[idx] if idx < len(metas) else None
+            if not meta:
+                continue
+            i = meta["i"]
+            child_yaml = meta["child_yaml"]
+            child_result_dir = meta["child_result_dir"]
+            retry_log_path = os.path.join(child_result_dir, f"child_{i}_retry.log")
+            with open(retry_log_path, "w") as logf2:
+                # recompute baseline child batch sizes
+                bs_base = max(4, int(args.batch_size if hasattr(args, "batch_size") else 8))
+                vae_base = max(8, int(getattr(args, "vae_batch_size", 32)))
+                if n > 1:
+                    bs_base = max(6, int(bs_base * 0.8))
+                    vae_base = max(16, int(vae_base * 0.8))
+                bs_retry = max(4, int(bs_base * getattr(args, "oom_retry_factor", 0.75)))
+                vae_retry = max(8, int(vae_base * getattr(args, "oom_retry_factor", 0.75)))
+
+                cmd2 = [
+                    sys.executable, "-m", "scripts.inference",
+                    "--inference_config", child_yaml,
+                    "--result_dir", child_result_dir,
+                    "--unet_model_path", args.unet_model_path,
+                    "--unet_config", args.unet_config,
+                    "--version", args.version,
+                    "--batch_size", str(bs_retry),
+                    "--vae_batch_size", str(vae_retry),
+                    "--ffmpeg_preset", getattr(args, "ffmpeg_preset", "veryfast"),
+                ]
+                if getattr(args, "ffmpeg_threads", None):
+                    cmd2 += ["--ffmpeg_threads", str(args.ffmpeg_threads)]
+                if getattr(args, "use_float16", False):
+                    cmd2 += ["--use_float16"]
+                if getattr(args, "enable_no_lip_bypass", False):
+                    cmd2 += ["--enable_no_lip_bypass"]
+                if getattr(args, "enable_pose2d_filter", False):
+                    cmd2 += ["--enable_pose2d_filter",
+                            "--pose2d_vpi_thr", str(args.pose2d_vpi_thr),
+                            "--pose2d_lfc_thr", str(args.pose2d_lfc_thr)]
+                if getattr(args, "whisper_dir", None):
+                    cmd2 += ["--whisper_dir", args.whisper_dir]
+                if getattr(args, "gpu_id", None) is not None:
+                    cmd2 += ["--gpu_id", str(args.gpu_id)]
+                if getattr(args, "ffmpeg_path", None):
+                    cmd2 += ["--ffmpeg_path", args.ffmpeg_path]
+
+                print("[COORD][RETRY] Launch:", " ".join(cmd2))
+                env2 = os.environ.copy()
+                env2["OMP_NUM_THREADS"] = str(t_cpu)
+                env2["MKL_NUM_THREADS"] = str(t_cpu)
+                env2["OPENBLAS_NUM_THREADS"] = str(t_cpu)
+                env2["NUMEXPR_NUM_THREADS"] = str(t_cpu)
+                p2 = subprocess.Popen(cmd2, env=env2, stdout=logf2, stderr=logf2)
+                rc2 = p2.wait()
+            logs.append(retry_log_path)
+            retcodes[idx] = rc2
+
+    total_measured = 0.0
+    total_media = 0.0
+    for lp in logs:
+        tm, ms = _parse_prof_from_log(lp)
+        total_measured += tm
+        total_media += ms
+
+    print("[COORD] Children return codes:", retcodes)
+    if total_media > 0:
+        print(f"[COORD] Aggregated measured: {total_measured:.3f}s over media {total_media:.3f}s (RTF={total_measured/total_media:.2f}x)")
+    else:
+        print(f"[COORD] Aggregated measured: {total_measured:.3f}s")
+
+    # Exit with non-zero if any child failed
+    if any(rc != 0 for rc in retcodes):
+        sys.exit(1)
+    return
+
+
 
 
 def fast_check_ffmpeg():
@@ -119,6 +410,11 @@ def main(args):
         os.environ["PATH"] = f"{args.ffmpeg_path}{path_separator}{os.environ['PATH']}"
         if not fast_check_ffmpeg():
             print("Warning: Unable to find ffmpeg, please ensure ffmpeg is properly installed")
+
+    # Coordinator mode: spawn multiple child processes and aggregate
+    if getattr(args, "num_threads", 1) and int(args.num_threads) > 1:
+        coordinator_main(args)
+        return
 
     # Initialize profiler and global timers
     total_start = time.perf_counter()
@@ -385,6 +681,8 @@ def main(args):
                     "-shortest",
                     output_vid_name,
                 ]
+                if getattr(args, "ffmpeg_threads", None):
+                    ffmpeg_cmd = ffmpeg_cmd[:-1] + ["-threads", str(args.ffmpeg_threads), ffmpeg_cmd[-1]]
                 proc = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE)
                 for i in range(video_num):
                     ori_frame = frame_list_cycle[i % len(frame_list_cycle)]
@@ -458,7 +756,10 @@ def main(args):
                     "-shortest",
                     output_vid_name,
                 ]
+                if getattr(args, "ffmpeg_threads", None):
+                    ffmpeg_cmd = ffmpeg_cmd[:-1] + ["-threads", str(args.ffmpeg_threads), ffmpeg_cmd[-1]]
                 proc = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE)
+
 
                 res_frame_idx = 0  # Track index in res_frame_list separately
 
@@ -595,6 +896,13 @@ if __name__ == "__main__":
     parser.add_argument("--pitch_debug_detailed", action="store_true", help="Enable per-frame detailed pitch filter debug logs")
     parser.add_argument("--version", type=str, default="v15", choices=["v1", "v15"], help="Model version to use")
     parser.add_argument("--enable_pitch_filter", action="store_true", help="Enable pitch filtering for extreme downward poses")
+    # Parallelization/coordinator flags
+    parser.add_argument("--num_threads", type=int, default=1, help="Number of parallel inference processes to run. 1 = normal single-process mode.")
+    parser.add_argument("--cpu_threads_per_job", type=int, default=None, help="Override CPU threads for BLAS/OpenMP per job. If not set, coordinator estimates.")
+    parser.add_argument("--ffmpeg_threads", type=int, default=None, help="Threads to pass to ffmpeg (-threads). If unset, ffmpeg decides.")
+    parser.add_argument("--stagger_start_secs", type=int, default=0, help="Stagger start between child jobs to avoid VRAM spikes.")
+    parser.add_argument("--oom_retry_factor", type=float, default=0.75, help="Scale factor for batch sizes on OOM retry (coordinator).")
+
     parser.add_argument("--pitch_down_threshold", type=float, default=30.0, help="Pitch angle threshold for filtering (degrees downward)")
     parser.add_argument("--pitch_up_threshold", type=float, default=20.0, help="Pitch angle threshold for exiting filter (degrees downward)")
     args = parser.parse_args()
