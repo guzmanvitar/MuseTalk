@@ -58,10 +58,10 @@ cmd_args="--inference_config $config_path \
     --pose2d_vpi_thr 1.10 \
     --pose2d_lfc_thr 0.19 \
     --ffmpeg_preset veryfast \
-    --vae_batch_size 20 \
-    --batch_size 6 \
+    --vae_batch_size 12 \
+    --batch_size 4 \
     --num_threads 4 \
-    --stagger_start_secs 20 \
+    --stagger_start_secs 30 \
     --ffmpeg_threads 2 \
     --cpu_threads_per_job 4 \
     --use_float16"
