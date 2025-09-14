@@ -158,13 +158,20 @@ def _build_task_list(conf) -> list:
         try:
             video_path = conf[task_id]["video_path"]
             audio_path = conf[task_id].get("audio_path")
+            result_name = conf[task_id].get("result_name")
+            bbox_shift = conf[task_id].get("bbox_shift")
             dur = _estimate_video_duration_sec(video_path)
-            tasks.append({
+            task = {
                 "task_id": task_id,
                 "video_path": video_path,
                 "audio_path": audio_path,
                 "dur": dur,
-            })
+            }
+            if result_name:
+                task["result_name"] = result_name
+            if bbox_shift is not None:
+                task["bbox_shift"] = bbox_shift
+            tasks.append(task)
         except Exception:
             continue
     return tasks
@@ -187,6 +194,10 @@ def _write_subset_yaml(items: list, base_dir: str, idx: int) -> str:
         }
         if t.get("audio_path"):
             entry["audio_path"] = t["audio_path"]
+        if t.get("result_name"):
+            entry["result_name"] = t["result_name"]
+        if t.get("bbox_shift") is not None:
+            entry["bbox_shift"] = t["bbox_shift"]
         subset[t["task_id"]] = entry
     tmp_dir = os.path.join(base_dir, "_parallel_tmp")
     os.makedirs(tmp_dir, exist_ok=True)
@@ -243,8 +254,8 @@ def coordinator_main(args):
         if len(b["items"]) == 0:
             continue
         child_yaml = _write_subset_yaml(b["items"], args.result_dir, i)
-        child_result_dir = os.path.join(args.result_dir, f"p{i}")
-        os.makedirs(child_result_dir, exist_ok=True)
+        # Save outputs directly into the main result_dir (no per-child subdirs)
+        child_result_dir = args.result_dir
 
         # Scale batch sizes conservatively for multi-job
         bs_child = max(4, int(args.batch_size if hasattr(args, "batch_size") else 8))
@@ -259,16 +270,17 @@ def coordinator_main(args):
         env["OPENBLAS_NUM_THREADS"] = str(t_cpu)
         env["NUMEXPR_NUM_THREADS"] = str(t_cpu)
 
-        log_path = os.path.join(child_result_dir, f"child_{i}.log")
+        # Log files in the main result directory
+        log_path = os.path.join(args.result_dir, f"child_{i}.log")
         logs.append(log_path)
-        metas.append({"i": i, "child_yaml": child_yaml, "child_result_dir": child_result_dir})
+        metas.append({"i": i, "child_yaml": child_yaml, "child_result_dir": args.result_dir})
 
         logf = open(log_path, "w")
 
         cmd = [
             sys.executable, "-m", "scripts.inference",
             "--inference_config", child_yaml,
-            "--result_dir", child_result_dir,
+            "--result_dir", args.result_dir,
             "--unet_model_path", args.unet_model_path,
             "--unet_config", args.unet_config,
             "--version", args.version,
@@ -336,7 +348,7 @@ def coordinator_main(args):
                 cmd2 = [
                     sys.executable, "-m", "scripts.inference",
                     "--inference_config", child_yaml,
-                    "--result_dir", child_result_dir,
+                    "--result_dir", args.result_dir,
                     "--unet_model_path", args.unet_model_path,
                     "--unet_config", args.unet_config,
                     "--version", args.version,
@@ -548,9 +560,8 @@ def main(args):
             os.makedirs(temp_dir, exist_ok=True)
 
             # Set result save paths (kept for compatibility with coord pickle path)
-            result_img_save_path = os.path.join(temp_dir, output_basename)
+            # Note: result_img_save_path removed (no per-clip directories are needed)
             crop_coord_save_path = os.path.join(args.result_dir, "../", input_basename+".pkl")
-            os.makedirs(result_img_save_path, exist_ok=True)
 
             # Set output video path
             if args.output_vid_name is None:
