@@ -16,7 +16,7 @@ import sys
 
 from PIL import Image
 
-from musetalk.utils.blending import get_image
+from musetalk.utils.blending import get_image, reset_foreground_preserve_state
 from musetalk.utils.face_parsing import FaceParsing
 from musetalk.utils.audio_processor import AudioProcessor
 from musetalk.utils.utils import get_file_type, get_video_fps, datagen, load_all_model
@@ -298,6 +298,21 @@ def coordinator_main(args):
             cmd += ["--enable_pose2d_filter",
                     "--pose2d_vpi_thr", str(args.pose2d_vpi_thr),
                     "--pose2d_lfc_thr", str(args.pose2d_lfc_thr)]
+        # Propagate foreground preserve flags to child processes
+        if getattr(args, "enable_foreground_preserve", False):
+            cmd += ["--enable_foreground_preserve"]
+        if hasattr(args, "foreground_preserve_dilate_px") and args.foreground_preserve_dilate_px is not None:
+            cmd += ["--foreground_preserve_dilate_px", str(args.foreground_preserve_dilate_px)]
+        if hasattr(args, "foreground_preserve_temporal_smooth") and args.foreground_preserve_temporal_smooth is not None:
+            cmd += ["--foreground_preserve_temporal_smooth", str(args.foreground_preserve_temporal_smooth)]
+        if hasattr(args, "foreground_preserve_roi_scale") and args.foreground_preserve_roi_scale is not None:
+            cmd += ["--foreground_preserve_roi_scale", str(args.foreground_preserve_roi_scale)]
+        if hasattr(args, "foreground_preserve_min_det_conf") and args.foreground_preserve_min_det_conf is not None:
+            cmd += ["--foreground_preserve_min_det_conf", str(args.foreground_preserve_min_det_conf)]
+        if hasattr(args, "foreground_preserve_min_track_conf") and args.foreground_preserve_min_track_conf is not None:
+            cmd += ["--foreground_preserve_min_track_conf", str(args.foreground_preserve_min_track_conf)]
+        if getattr(args, "foreground_preserve_debug", False):
+            cmd += ["--foreground_preserve_debug"]
         if getattr(args, "whisper_dir", None):
             cmd += ["--whisper_dir", args.whisper_dir]
         if getattr(args, "gpu_id", None) is not None:
@@ -366,6 +381,21 @@ def coordinator_main(args):
                     cmd2 += ["--enable_pose2d_filter",
                             "--pose2d_vpi_thr", str(args.pose2d_vpi_thr),
                             "--pose2d_lfc_thr", str(args.pose2d_lfc_thr)]
+                # Propagate foreground preserve flags to retry processes
+                if getattr(args, "enable_foreground_preserve", False):
+                    cmd2 += ["--enable_foreground_preserve"]
+                if hasattr(args, "foreground_preserve_dilate_px") and args.foreground_preserve_dilate_px is not None:
+                    cmd2 += ["--foreground_preserve_dilate_px", str(args.foreground_preserve_dilate_px)]
+                if hasattr(args, "foreground_preserve_temporal_smooth") and args.foreground_preserve_temporal_smooth is not None:
+                    cmd2 += ["--foreground_preserve_temporal_smooth", str(args.foreground_preserve_temporal_smooth)]
+                if hasattr(args, "foreground_preserve_roi_scale") and args.foreground_preserve_roi_scale is not None:
+                    cmd2 += ["--foreground_preserve_roi_scale", str(args.foreground_preserve_roi_scale)]
+                if hasattr(args, "foreground_preserve_min_det_conf") and args.foreground_preserve_min_det_conf is not None:
+                    cmd2 += ["--foreground_preserve_min_det_conf", str(args.foreground_preserve_min_det_conf)]
+                if hasattr(args, "foreground_preserve_min_track_conf") and args.foreground_preserve_min_track_conf is not None:
+                    cmd2 += ["--foreground_preserve_min_track_conf", str(args.foreground_preserve_min_track_conf)]
+                if getattr(args, "foreground_preserve_debug", False):
+                    cmd2 += ["--foreground_preserve_debug"]
                 if getattr(args, "whisper_dir", None):
                     cmd2 += ["--whisper_dir", args.whisper_dir]
                 if getattr(args, "gpu_id", None) is not None:
@@ -531,9 +561,11 @@ def main(args):
     perf.end("init:config_and_filters")
 
     # Process each task
+
     for task_id in inference_config:
         try:
-            # Reset pitch filtering state for each new video
+            # Reset per-clip state
+            reset_foreground_preserve_state(getattr(args, 'foreground_preserve_temporal_smooth', 0))
             reset_pitch_filter_state()
 
             # Get task configuration
@@ -809,7 +841,20 @@ def main(args):
                                     res_frame = cv2.resize(res_frame.astype(np.uint8), (x2 - x1, y2 - y1))
                                     # Merge results with version-specific parameters
                                     if args.version == "v15":
-                                        out_frame = get_image(ori_frame, res_frame, [x1, y1, x2, y2], mode=args.parsing_mode, fp=fp)
+                                        out_frame = get_image(
+                                            ori_frame,
+                                            res_frame,
+                                            [x1, y1, x2, y2],
+                                            mode=args.parsing_mode,
+                                            fp=fp,
+                                            enable_foreground_preserve=getattr(args, "enable_foreground_preserve", False),
+                                            foreground_preserve_dilate_px=getattr(args, "foreground_preserve_dilate_px", 5),
+                                            foreground_preserve_debug=getattr(args, "foreground_preserve_debug", False),
+                                            foreground_preserve_temporal_smooth=getattr(args, "foreground_preserve_temporal_smooth", 0),
+                                            foreground_preserve_roi_scale=getattr(args, "foreground_preserve_roi_scale", 1.0),
+                                            foreground_preserve_min_det_conf=getattr(args, "foreground_preserve_min_det_conf", 0.4),
+                                            foreground_preserve_min_track_conf=getattr(args, "foreground_preserve_min_track_conf", 0.3),
+                                        )
                                     else:
                                         out_frame = get_image(ori_frame, res_frame, [x1, y1, x2, y2], fp=fp)
                                 except Exception:
@@ -886,6 +931,11 @@ if __name__ == "__main__":
     parser.add_argument("--pose2d_none_consecutive_max", type=int, default=4, help="None/invalid metrics for N frames forces FILTER (conservative)")
     parser.add_argument("--pose2d_enable_ear_gate", action="store_true", help="Enable optional EAR gate to boost down decision when squinting sustained")
     parser.add_argument("--pose2d_ear_thr", type=float, default=0.18, help="EAR threshold for squint detection")
+    parser.add_argument("--foreground_preserve_temporal_smooth", type=int, default=0, help="Temporal smoothing window (frames) for preserve mask; 0 disables")
+    parser.add_argument("--foreground_preserve_roi_scale", type=float, default=1.0, help="Scale factor to enlarge detection ROI around crop (1.0 = same as crop)")
+    parser.add_argument("--foreground_preserve_min_det_conf", type=float, default=0.4, help="MediaPipe min_detection_confidence")
+    parser.add_argument("--foreground_preserve_min_track_conf", type=float, default=0.3, help="MediaPipe min_tracking_confidence")
+
     parser.add_argument("--pose2d_ear_gate_consec", type=int, default=2, help="Consecutive frames of low EAR to trigger bias")
     parser.add_argument("--pose2d_ear_bias", type=float, default=0.02, help="Bias added to VPI and NMI thresholds when EAR gate is on")
     parser.add_argument("--pose2d_debug_detailed", action="store_true", help="Enable per-frame detailed Pose2D filter debug logs")
@@ -901,6 +951,16 @@ if __name__ == "__main__":
     parser.add_argument("--parsing_mode", default='jaw', help="Face blending parsing mode")
     parser.add_argument("--left_cheek_width", type=int, default=90, help="Width of left cheek region")
     parser.add_argument("--right_cheek_width", type=int, default=90, help="Width of right cheek region")
+    # Foreground object preservation (hands only for initial version)
+    parser.add_argument("--enable_foreground_preserve", action="store_true", help="Enable foreground object preservation (hands) during blending (v15 only)")
+    parser.add_argument("--foreground_preserve_dilate_px", type=int, default=5, help="Dilation (px) applied to preserve mask to avoid halos")
+    # TODO: Future flags for microphones/other objects/depth-aware occlusion
+    # parser.add_argument("--enable_mic_detection", action="store_true", help="Enable microphone detection (future)")
+    # parser.add_argument("--enable_object_detection", action="store_true", help="Enable generic object detection (future)")
+    parser.add_argument("--foreground_preserve_debug", action="store_true", help="Debug logs for foreground preservation (prints per-frame details)")
+
+    # parser.add_argument("--enable_depth_aware", action="store_true", help="Enable depth-aware occlusion handling (future)")
+
     parser.add_argument("--pitch_conf_min", type=float, default=0.6, help="Minimum confidence (0-1) required to change pitch filter state")
     parser.add_argument("--pitch_ema_alpha", type=float, default=0.3, help="EMA alpha for pitch smoothing (0-1)")
     parser.add_argument("--pitch_min_hold_frames", type=int, default=6, help="Minimum frames to hold state before allowing change")

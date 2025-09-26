@@ -1,78 +1,78 @@
 # Comprehensive test configuration for all test clips
-task_e1_segment_0000_front_to_down:
-  video_path: "test_clips/e1_segment_0000_front_to_down.mp4"
-  audio_path: "test_clips/e1_segment_0000_front_to_down.wav"
-  result_name: "e1_segment_0000_front_to_down_result.mp4"
+# task_e1_segment_0000_front_to_down:
+#   video_path: "test_clips/e1_segment_0000_front_to_down.mp4"
+#   audio_path: "test_clips/e1_segment_0000_front_to_down.wav"
+#   result_name: "e1_segment_0000_front_to_down_result.mp4"
 
-task_e1_segment_0001_up_down_up_down:
-  video_path: "test_clips/e1_segment_0001_up_down_up_down.mp4"
-  audio_path: "test_clips/e1_segment_0001_up_down_up_down.wav"
-  result_name: "e1_segment_0001_up_down_up_down_result.mp4"
+# task_e1_segment_0001_up_down_up_down:
+#   video_path: "test_clips/e1_segment_0001_up_down_up_down.mp4"
+#   audio_path: "test_clips/e1_segment_0001_up_down_up_down.wav"
+#   result_name: "e1_segment_0001_up_down_up_down_result.mp4"
 
-task_e1_segment_0002_up_slowed:
-  video_path: "test_clips/e1_segment_0002_up_slowed.mp4"
-  audio_path: "test_clips/e1_segment_0002_up_slowed.wav"
-  result_name: "e1_segment_0002_up_slowed_result.mp4"
+# task_e1_segment_0002_up_slowed:
+#   video_path: "test_clips/e1_segment_0002_up_slowed.mp4"
+#   audio_path: "test_clips/e1_segment_0002_up_slowed.wav"
+#   result_name: "e1_segment_0002_up_slowed_result.mp4"
 
-task_e1_segment_0010_slight_occlussion:
-  video_path: "test_clips/e1_segment_0010_slight_occlussion.mp4"
-  audio_path: "test_clips/e1_segment_0010_slight_occlussion.wav"
-  result_name: "e1_segment_0010_slight_occlussion_result.mp4"
+# task_e1_segment_0010_slight_occlussion:
+#   video_path: "test_clips/e1_segment_0010_slight_occlussion.mp4"
+#   audio_path: "test_clips/e1_segment_0010_slight_occlussion.wav"
+#   result_name: "e1_segment_0010_slight_occlussion_result.mp4"
 
-task_e1_segment_0013_side_to_front:
-  video_path: "test_clips/e1_segment_0013_side_to_front.mp4"
-  audio_path: "test_clips/e1_segment_0013_side_to_front.wav"
-  result_name: "e1_segment_0013_side_to_front_result.mp4"
+# task_e1_segment_0013_side_to_front:
+#   video_path: "test_clips/e1_segment_0013_side_to_front.mp4"
+#   audio_path: "test_clips/e1_segment_0013_side_to_front.wav"
+#   result_name: "e1_segment_0013_side_to_front_result.mp4"
 
-task_e1_segment_0045_full_front:
-  video_path: "test_clips/e1_segment_0045_full_front.mp4"
-  audio_path: "test_clips/e1_segment_0045_full_front.wav"
-  result_name: "e1_segment_0045_full_front_result.mp4"
+# task_e1_segment_0045_full_front:
+#   video_path: "test_clips/e1_segment_0045_full_front.mp4"
+#   audio_path: "test_clips/e1_segment_0045_full_front.wav"
+#   result_name: "e1_segment_0045_full_front_result.mp4"
 
-task_e1_segment_0100_camera_switch:
-  video_path: "test_clips/e1_segment_0100_camera_switch.mp4"
-  audio_path: "test_clips/e1_segment_0100_camera_switch.wav"
-  result_name: "e1_segment_0100_camera_switch_result.mp4"
+# task_e1_segment_0100_camera_switch:
+#   video_path: "test_clips/e1_segment_0100_camera_switch.mp4"
+#   audio_path: "test_clips/e1_segment_0100_camera_switch.wav"
+#   result_name: "e1_segment_0100_camera_switch_result.mp4"
 
 task_e1_segment_0101_fast_movement_occlussion:
   video_path: "test_clips/e1_segment_0101_fast_movement_occlussion.mp4"
   audio_path: "test_clips/e1_segment_0101_fast_movement_occlussion.wav"
   result_name: "e1_segment_0101_fast_movement_occlussion_result.mp4"
 
-task_e1_segment_0384_full_side:
-  video_path: "test_clips/e1_segment_0384_full_side.mp4"
-  audio_path: "test_clips/e1_segment_0384_full_side.wav"
-  result_name: "e1_segment_0384_full_side_result.mp4"
+# task_e1_segment_0384_full_side:
+#   video_path: "test_clips/e1_segment_0384_full_side.mp4"
+#   audio_path: "test_clips/e1_segment_0384_full_side.wav"
+#   result_name: "e1_segment_0384_full_side_result.mp4"
 
 task_e1_segment_0528_heavy_occlusion:
   video_path: "test_clips/e1_segment_0528_heavy_occlusion.mp4"
   audio_path: "test_clips/e1_segment_0528_heavy_occlusion.wav"
   result_name: "e1_segment_0528_heavy_occlusion_result.mp4"
 
-task_e1_segment_0548_no_face:
-  video_path: "test_clips/e1_segment_0548_no_face.mp4"
-  audio_path: "test_clips/e1_segment_0548_no_face.wav"
-  result_name: "e1_segment_0548_no_face_result.mp4"
+# task_e1_segment_0548_no_face:
+#   video_path: "test_clips/e1_segment_0548_no_face.mp4"
+#   audio_path: "test_clips/e1_segment_0548_no_face.wav"
+#   result_name: "e1_segment_0548_no_face_result.mp4"
 
-task_e1_segment_0590_whiteboard_to_front:
-  video_path: "test_clips/e1_segment_0590_whiteboard_to_front.mp4"
-  audio_path: "test_clips/e1_segment_0590_whiteboard_to_front.wav"
-  result_name: "e1_segment_0590_whiteboard_to_front_result.mp4"
+# task_e1_segment_0590_whiteboard_to_front:
+#   video_path: "test_clips/e1_segment_0590_whiteboard_to_front.mp4"
+#   audio_path: "test_clips/e1_segment_0590_whiteboard_to_front.wav"
+#   result_name: "e1_segment_0590_whiteboard_to_front_result.mp4"
 
-task_e1_segment_0596_whiteboard_to_front_2:
-  video_path: "test_clips/e1_segment_0596_whiteboard_to_front_2.mp4"
-  audio_path: "test_clips/e1_segment_0596_whiteboard_to_front_2.wav"
-  result_name: "e1_segment_0596_whiteboard_to_front_2_result.mp4"
+# task_e1_segment_0596_whiteboard_to_front_2:
+#   video_path: "test_clips/e1_segment_0596_whiteboard_to_front_2.mp4"
+#   audio_path: "test_clips/e1_segment_0596_whiteboard_to_front_2.wav"
+#   result_name: "e1_segment_0596_whiteboard_to_front_2_result.mp4"
 
-task_e2_segment_0035_small_face_occlussion:
-  video_path: "test_clips/e2_segment_0035_small_face_occlussion.mp4"
-  audio_path: "test_clips/e2_segment_0035_small_face_occlussion.wav"
-  result_name: "e2_segment_0035_small_face_occlussion_result.mp4"
+# task_e2_segment_0035_small_face_occlussion:
+#   video_path: "test_clips/e2_segment_0035_small_face_occlussion.mp4"
+#   audio_path: "test_clips/e2_segment_0035_small_face_occlussion.wav"
+#   result_name: "e2_segment_0035_small_face_occlussion_result.mp4"
 
-task_e2_segment_0036_small_face:
-  video_path: "test_clips/e2_segment_0036_small_face.mp4"
-  audio_path: "test_clips/e2_segment_0036_small_face.wav"
-  result_name: "e2_segment_0036_small_face_result.mp4"
+# task_e2_segment_0036_small_face:
+#   video_path: "test_clips/e2_segment_0036_small_face.mp4"
+#   audio_path: "test_clips/e2_segment_0036_small_face.wav"
+#   result_name: "e2_segment_0036_small_face_result.mp4"
 
 task_e2_segment_0049_hand_to_lip_then_chin:
   video_path: "test_clips/e2_segment_0049_hand_to_lip_then_chin.mp4"

@@ -18,3 +18,5 @@ imageio[ffmpeg]
 omegaconf
 ffmpeg-python
 moviepy
+
+mediapipe==0.10.21

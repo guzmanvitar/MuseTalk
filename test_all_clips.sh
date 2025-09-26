@@ -58,8 +58,19 @@ cmd_args="--inference_config $config_path \
     --pose2d_vpi_thr 1.10 \
     --pose2d_lfc_thr 0.19 \
     --ffmpeg_preset veryfast \
-    --vae_batch_size 32 \
-    --batch_size 12"
+    --vae_batch_size 12 \
+    --batch_size 4 \
+    --num_threads 4 \
+    --stagger_start_secs 30 \
+    --ffmpeg_threads 2 \
+    --cpu_threads_per_job 4 \
+    --use_float16 \
+    --enable_foreground_preserve \
+    --foreground_preserve_dilate_px 14 \
+    --foreground_preserve_roi_scale 4.0 \
+    --foreground_preserve_temporal_smooth 8 \
+    --foreground_preserve_min_det_conf 0.30 \
+    --foreground_preserve_min_track_conf 0.30"
 
 echo "Testing comprehensive clips with MuseTalk $version in $mode mode"
 echo "Config: $config_path"

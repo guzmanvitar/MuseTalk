@@ -15,7 +15,7 @@ from transformers import WhisperModel
 from musetalk.utils.face_parsing import FaceParsing
 from musetalk.utils.utils import datagen
 from musetalk.utils.preprocessing import get_landmark_and_bbox, read_imgs
-from musetalk.utils.blending import get_image_prepare_material, get_image_blending
+from musetalk.utils.blending import get_image_prepare_material, get_image_blending, reset_foreground_preserve_state
 from musetalk.utils.utils import load_all_model
 from musetalk.utils.audio_processor import AudioProcessor
 
@@ -64,7 +64,7 @@ class Avatar:
             self.base_path = f"./results/{args.version}/avatars/{avatar_id}"
         else:  # v1
             self.base_path = f"./results/avatars/{avatar_id}"
-            
+
         self.avatar_path = self.base_path
         self.full_imgs_path = f"{self.avatar_path}/full_imgs"
         self.coords_path = f"{self.avatar_path}/coords.pkl"
@@ -229,7 +229,24 @@ class Avatar:
                 continue
             mask = self.mask_list_cycle[self.idx % (len(self.mask_list_cycle))]
             mask_crop_box = self.mask_coords_list_cycle[self.idx % (len(self.mask_coords_list_cycle))]
-            combine_frame = get_image_blending(ori_frame,res_frame,bbox,mask,mask_crop_box)
+            # Reset temporal smoother at the start of this stream
+            if self.idx == 0:
+                reset_foreground_preserve_state(getattr(args, 'foreground_preserve_temporal_smooth', 0))
+
+            combine_frame = get_image_blending(
+                ori_frame,
+                res_frame,
+                bbox,
+                mask,
+                mask_crop_box,
+                enable_foreground_preserve=getattr(args, "enable_foreground_preserve", False),
+                foreground_preserve_dilate_px=getattr(args, "foreground_preserve_dilate_px", 5),
+                foreground_preserve_debug=getattr(args, "foreground_preserve_debug", False),
+                foreground_preserve_temporal_smooth=getattr(args, "foreground_preserve_temporal_smooth", 0),
+                foreground_preserve_roi_scale=getattr(args, "foreground_preserve_roi_scale", 1.0),
+                foreground_preserve_min_det_conf=getattr(args, "foreground_preserve_min_det_conf", 0.4),
+                foreground_preserve_min_track_conf=getattr(args, "foreground_preserve_min_track_conf", 0.3),
+            )
 
             if skip_save_images is False:
                 cv2.imwrite(f"{self.avatar_path}/tmp/{str(self.idx).zfill(8)}.png", combine_frame)
@@ -327,6 +344,21 @@ if __name__ == "__main__":
     parser.add_argument("--extra_margin", type=int, default=10, help="Extra margin for face cropping")
     parser.add_argument("--fps", type=int, default=25, help="Video frames per second")
     parser.add_argument("--audio_padding_length_left", type=int, default=2, help="Left padding length for audio")
+    parser.add_argument("--foreground_preserve_temporal_smooth", type=int, default=0, help="Temporal smoothing window (frames) for preserve mask; 0 disables")
+    parser.add_argument("--foreground_preserve_roi_scale", type=float, default=1.0, help="Scale factor to enlarge detection ROI around crop (1.0 = same as crop)")
+    parser.add_argument("--foreground_preserve_min_det_conf", type=float, default=0.4, help="MediaPipe min_detection_confidence")
+    parser.add_argument("--foreground_preserve_min_track_conf", type=float, default=0.3, help="MediaPipe min_tracking_confidence")
+
+    # Foreground object preservation (hands only for initial version)
+    parser.add_argument("--enable_foreground_preserve", action="store_true", help="Preserve foreground hands during blending (v15 only)")
+    parser.add_argument("--foreground_preserve_dilate_px", type=int, default=5, help="Dilation (px) for preserve mask to avoid halos")
+    # TODO: Future flags for microphones/other objects/depth-aware occlusion
+    # parser.add_argument("--enable_mic_detection", action="store_true", help="Enable microphone detection (future)")
+    # parser.add_argument("--enable_object_detection", action="store_true", help="Enable generic object detection (future)")
+    # parser.add_argument("--enable_depth_aware", action="store_true", help="Enable depth-aware occlusion handling (future)")
+    parser.add_argument("--foreground_preserve_debug", action="store_true", help="Debug logs for foreground preservation (prints per-frame details)")
+
+
     parser.add_argument("--audio_padding_length_right", type=int, default=2, help="Right padding length for audio")
     parser.add_argument("--batch_size", type=int, default=20, help="Batch size for inference")
     parser.add_argument("--output_vid_name", type=str, default=None, help="Name of output video file")
